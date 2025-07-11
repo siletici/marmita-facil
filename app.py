@@ -7,7 +7,7 @@ import uuid
 from utils.pdf_export import gerar_pdf
 
 # ===== Caminhos =====
-logo_path = os.path.join(r"C:\Users\liaou\marmita-facil\imagens", "logo-marmitafacil.png")
+logo_path = "imagens/logo-marmitafacil.png"
 caminho_csv = "data/pedidos.csv"
 caminho_marmitas = "data/marmitas.csv"
 caminho_usuarios = "data/usuarios.csv"
