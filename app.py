@@ -211,38 +211,44 @@ if menu == "Fazer Pedido":
     lider = st.text_input("Líder", key="lider_pedido")
     centro_custo = st.text_input("Centro de custo", key="cc_pedido")
 
+    # --- CORREÇÃO: Inicialize sempre como lista vazia ---
     marmitas_disponiveis = []
+
     if os.path.exists(caminho_marmitas):
-        df_marmitas = pd.read_csv(caminho_marmitas)
-        if not df_marmitas.empty and "Saldo Atual" in df_marmitas.columns:
-            marmitas_com_saldo = df_marmitas[df_marmitas["Saldo Atual"] > 0].reset_index(drop=True)
-            marmitas_disponiveis = marmitas_com_saldo.to_dict(orient="records")
+        try:
+            df_marmitas = pd.read_csv(caminho_marmitas)
+            if "Saldo Atual" in df_marmitas.columns:
+                df_marmitas["Saldo Atual"] = pd.to_numeric(df_marmitas["Saldo Atual"], errors="coerce").fillna(0)
+                marmitas_com_saldo = df_marmitas[df_marmitas["Saldo Atual"] > 0].reset_index(drop=True)
+                marmitas_disponiveis = marmitas_com_saldo.to_dict(orient="records")
+        except Exception as e:
+            st.warning(f"Erro ao ler o arquivo de marmitas: {e}")
 
-if marmitas_disponiveis:
-    st.markdown("<h4 style='color:#fff;margin-top:2em;'>Escolha sua marmita:</h4>", unsafe_allow_html=True)
-    n_colunas = 2 if len(marmitas_disponiveis) > 1 else 1
-    if "escolha_cardapio" not in st.session_state:
-        st.session_state["escolha_cardapio"] = None
+    if marmitas_disponiveis:
+        st.markdown("<h4 style='color:#fff;margin-top:2em;'>Escolha sua marmita:</h4>", unsafe_allow_html=True)
+        n_colunas = 2 if len(marmitas_disponiveis) > 1 else 1
+        if "escolha_cardapio" not in st.session_state:
+            st.session_state["escolha_cardapio"] = None
 
-    for i in range(0, len(marmitas_disponiveis), n_colunas):
-        cols = st.columns(n_colunas)
-        for j, col in enumerate(cols):
-            idx = i + j
-            if idx < len(marmitas_disponiveis):
-                item = marmitas_disponiveis[idx]
-                with col:
-                    st.markdown('<div class="card-marmita">', unsafe_allow_html=True)
-                    if item.get("Imagem") and os.path.exists(str(item["Imagem"])):
-                        st.image(str(item["Imagem"]), use_container_width=True)
-                    else:
-                        st.image("https://cdn-icons-png.flaticon.com/512/2921/2921827.png", width=120)
-                    st.markdown(f"""
-                        <h5 style='margin-bottom:5px;font-size:1.4rem;'>{item['Marmita']}</h5>
-                        <p style='margin:0 0 4px 0;color:#eee;font-size:1.06rem;'>Estoque: {item['Saldo Atual']}</p>
-                    """, unsafe_allow_html=True)
-                    if st.button(f"Selecionar {item['Marmita']}", key=f"btn_sel_{item['ID Marmita']}"):
-                        st.session_state["escolha_cardapio"] = idx
-                    st.markdown('</div>', unsafe_allow_html=True)
+        for i in range(0, len(marmitas_disponiveis), n_colunas):
+            cols = st.columns(n_colunas)
+            for j, col in enumerate(cols):
+                idx = i + j
+                if idx < len(marmitas_disponiveis):
+                    item = marmitas_disponiveis[idx]
+                    with col:
+                        st.markdown('<div class="card-marmita">', unsafe_allow_html=True)
+                        if item.get("Imagem") and os.path.exists(str(item["Imagem"])):
+                            st.image(str(item["Imagem"]), use_container_width=True)
+                        else:
+                            st.image("https://cdn-icons-png.flaticon.com/512/2921/2921827.png", width=120)
+                        st.markdown(f"""
+                            <h5 style='margin-bottom:5px;font-size:1.4rem;'>{item['Marmita']}</h5>
+                            <p style='margin:0 0 4px 0;color:#eee;font-size:1.06rem;'>Estoque: {item['Saldo Atual']}</p>
+                        """, unsafe_allow_html=True)
+                        if st.button(f"Selecionar {item['Marmita']}", key=f"btn_sel_{item['ID Marmita']}"):
+                            st.session_state["escolha_cardapio"] = idx
+                        st.markdown('</div>', unsafe_allow_html=True)
 
         escolhido = st.session_state.get("escolha_cardapio")
         if escolhido is not None:
@@ -288,6 +294,7 @@ if marmitas_disponiveis:
                     df = pd.concat([df, pd.DataFrame([pedido])], ignore_index=True)
                     df.to_csv(caminho_csv, index=False)
 
+                    # Atualiza o saldo da marmita
                     df_marmitas.loc[df_marmitas["ID Marmita"] == selecionada["ID Marmita"], "Saldo Atual"] -= quantidade
                     df_marmitas.to_csv(caminho_marmitas, index=False)
 
@@ -300,6 +307,7 @@ if marmitas_disponiveis:
                     st.error("Preencha seu nome e confira o estoque disponível.")
     else:
         st.warning("⚠️ Nenhuma marmita disponível com saldo.")
+
 
 # ========== HISTÓRICO DE PEDIDOS ==========
 elif menu == "Histórico de Pedidos":
