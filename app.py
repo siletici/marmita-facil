@@ -1,33 +1,17 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import datetime
-import os
-import uuid
 
-from utils.pdf_export import gerar_pdf
+# ========================
+# CONFIGURAÇÃO E CSS
+# ========================
+st.set_page_config(page_title="Marmita Fácil", layout="centered")
 
-# ===== Caminhos =====
-logo_path = "imagens/logo-marmitafacil.png"
-caminho_csv = "data/pedidos.csv"
-caminho_marmitas = "data/marmitas.csv"
-caminho_usuarios = "data/usuarios.csv"
-caminho_historico = "data/historico_status.csv"
-
-os.makedirs("imagens", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-
-# =========== ESTILO GLOBAL =============
 st.markdown("""
     <style>
-    body, .main, .block-container, .stApp {
-        background: #18191A !important;
-    }
-    .st-emotion-cache-6qob1r, .st-emotion-cache-1wrcr25 {
-        background: #18191A !important;
-    }
-    .stSidebar, .css-18ni7ap.e8zbici2 {
-        background: #191C1F !important;
-    }
+    body, .main, .block-container, .stApp { background: #18191A !important; }
+    .stSidebar, .css-18ni7ap.e8zbici2 { background: #191C1F !important; }
     .stButton > button {
         background: linear-gradient(90deg, #ED212B 40%, #FFC300 100%);
         color: #fff !important;
@@ -55,37 +39,6 @@ st.markdown("""
         object-fit: cover;
         background: #eee;
     }
-    .sidebar-logo {
-        display: flex; align-items: center; justify-content: center;
-        margin-bottom: 18px;
-    }
-    .menu-item {
-        font-size: 1.15rem;
-        font-weight: 500;
-        color: #fff;
-        margin: 8px 0 18px 0;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .stDownloadButton>button {
-        background: #222 !important;
-        color: #fff !important;
-        border-radius: 18px !important;
-        border: none;
-    }
-    .stFileUploader {
-        color: #fff !important;
-        background: #23272B !important;
-    }
-    .stSelectbox > div {
-        background: transparent !important;
-        color: #fff !important;
-        border-radius: 12px !important;
-    }
-    .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput label, .stDateInput label {
-        color: #fff !important;
-    }
     h1, h2, h3, h4, h5, h6 {
         color: #fff !important;
         font-weight: bold !important;
@@ -107,75 +60,81 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ====== Sessão de autenticação ======
+# ========================
+# BANCO DE DADOS SQLITE
+# ========================
+DB_PATH = "marmita_facil.db"
+
+def get_conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            login TEXT NOT NULL UNIQUE,
+            senha TEXT NOT NULL
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS marmitas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            estoque INTEGER NOT NULL,
+            saldo_atual INTEGER NOT NULL,
+            data_cadastro TEXT,
+            imagem TEXT
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            nome TEXT,
+            matricula TEXT,
+            unidade TEXT,
+            destino TEXT,
+            lider TEXT,
+            centro_custo TEXT,
+            marmita_id INTEGER,
+            marmita_nome TEXT,
+            quantidade INTEGER,
+            observacoes TEXT,
+            status TEXT,
+            FOREIGN KEY (marmita_id) REFERENCES marmitas(id)
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# ========================
+# LOGO (sempre público)
+# ========================
+def exibe_logo_topo():
+    url = "https://marmita-facil-dados.s3.us-east-2.amazonaws.com/imagens/logo-marmitafacil.png"
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        st.image(url, use_container_width=True)
+
+# ========================
+# SIDEBAR/MENU
+# ========================
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 if "usuario" not in st.session_state:
     st.session_state.usuario = ""
 
-# ==== Funções de logo ====
-def exibe_logo_topo():
-    if os.path.exists(logo_path):
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image(logo_path, width=400)
-    else:
-        st.markdown("<h1 style='text-align:center;'>Marmita Fácil</h1>", unsafe_allow_html=True)
-
-# =================== Funções Auxiliares ===================
-def registrar_historico(id_pedido, status_antigo, status_novo, usuario):
-    registro = {
-        "DataHora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "ID Pedido": id_pedido,
-        "Status Antigo": status_antigo,
-        "Status Novo": status_novo,
-        "Usuario": usuario
-    }
-    if not os.path.exists(caminho_historico):
-        pd.DataFrame(columns=registro.keys()).to_csv(caminho_historico, index=False)
-    df_hist = pd.read_csv(caminho_historico)
-    df_hist = pd.concat([df_hist, pd.DataFrame([registro])], ignore_index=True)
-    df_hist.to_csv(caminho_historico, index=False)
-
-def fazer_logout():
-    st.session_state.autenticado = False
-    st.session_state.usuario = ""
-
-def gerar_id_pedido():
-    if os.path.exists(caminho_csv):
-        df = pd.read_csv(caminho_csv, dtype={"Matrícula": str})
-        if not df.empty and "ID Pedido" in df.columns:
-            last_id = df["ID Pedido"].str.replace("PED","").astype(int).max()
-            return f"PED{last_id+1:04d}"
-        else:
-            return "PED0001"
-    else:
-        return "PED0001"
-
-def gerar_id_marmita(df_marmitas):
-    if "ID Marmita" in df_marmitas.columns and not df_marmitas.empty:
-        return int(df_marmitas["ID Marmita"].max()) + 1
-    else:
-        return 1
-
-def cor_status(status):
-    cores = {
-        "Recebido pela Cozinha": "orange",
-        "Em preparo": "orange",
-        "Enviado": "orange",
-        "Entregue": "limegreen",
-        "Cancelado": "red",
-    }
-    return f"<span style='color: {cores.get(status, 'yellow')}; font-weight: bold'>{status}</span>"
-
-# ===== Sidebar/Menu =====
 menu_itens = {
     "Fazer Pedido": "📝 Fazer Pedido",
     "Histórico de Pedidos": "📋 Histórico de Pedidos",
 }
 if st.session_state.autenticado:
     menu_itens.update({
-        "Histórico de Alterações": "🕒 Histórico de Alterações",
         "Administração": "👨‍🍳 Administração",
         "Cadastrar Usuário": "👤 Cadastrar Usuário",
         "Logout": "🚪 Logout"
@@ -190,19 +149,92 @@ menu = st.sidebar.selectbox(
     key="menu_selectbox"
 )
 
-# =================== Menu principal ===================
-if menu == "Logout":
-    fazer_logout()
-    st.success("Logout realizado com sucesso!")
-    st.stop()
+# ========================
+# FUNÇÕES AUXILIARES BANCO
+# ========================
+def get_usuarios():
+    conn = get_conn()
+    df = pd.read_sql("SELECT * FROM usuarios", conn)
+    conn.close()
+    return df
 
-# ================== FAZER PEDIDO ==================
+def add_usuario(nome, login, senha):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("INSERT INTO usuarios (nome, login, senha) VALUES (?, ?, ?)", (nome, login, senha))
+    conn.commit()
+    conn.close()
+
+def get_marmitas():
+    conn = get_conn()
+    df = pd.read_sql("SELECT * FROM marmitas", conn)
+    conn.close()
+    return df
+
+def add_marmita(nome, estoque, imagem, data_cadastro=None):
+    if not data_cadastro:
+        data_cadastro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO marmitas (nome, estoque, saldo_atual, data_cadastro, imagem) VALUES (?, ?, ?, ?, ?)",
+        (nome, estoque, estoque, data_cadastro, imagem)
+    )
+    conn.commit()
+    conn.close()
+
+def atualizar_marmita(id_marmita, estoque, imagem=None):
+    conn = get_conn()
+    c = conn.cursor()
+    if imagem:
+        c.execute(
+            "UPDATE marmitas SET estoque=?, saldo_atual=?, imagem=? WHERE id=?",
+            (estoque, estoque, imagem, id_marmita)
+        )
+    else:
+        c.execute(
+            "UPDATE marmitas SET estoque=?, saldo_atual=? WHERE id=?",
+            (estoque, estoque, id_marmita)
+        )
+    conn.commit()
+    conn.close()
+
+def get_pedidos():
+    conn = get_conn()
+    df = pd.read_sql("SELECT * FROM pedidos", conn)
+    conn.close()
+    return df
+
+def add_pedido(pedido):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO pedidos 
+        (data, nome, matricula, unidade, destino, lider, centro_custo, marmita_id, marmita_nome, quantidade, observacoes, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            pedido["data"], pedido["nome"], pedido["matricula"], pedido["unidade"], pedido["destino"], pedido["lider"], pedido["centro_custo"],
+            pedido["marmita_id"], pedido["marmita_nome"], pedido["quantidade"], pedido["observacoes"], pedido["status"]
+        )
+    )
+    conn.commit()
+    conn.close()
+
+def atualizar_saldo_marmita(marmita_id, quantidade):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE marmitas SET saldo_atual = saldo_atual - ? WHERE id = ?", (quantidade, marmita_id))
+    conn.commit()
+    conn.close()
+
+# ========================
+# FUNÇÕES TELA
+# ========================
+
+# ---------- FAZER PEDIDO ----------
 if menu == "Fazer Pedido":
     exibe_logo_topo()
-    st.markdown(
-        "<h2 style='color:#fff;font-size:2.3rem;margin-bottom:10px;'>Faça seu pedido de forma rápida e prática!</h2>",
-        unsafe_allow_html=True,
-    )
+    st.header("Faça seu pedido!")
 
     nome = st.text_input("Seu nome", key="nome_pedido")
     matricula = st.text_input("Sua matrícula", key="matricula_pedido")
@@ -211,20 +243,10 @@ if menu == "Fazer Pedido":
     lider = st.text_input("Líder", key="lider_pedido")
     centro_custo = st.text_input("Centro de custo", key="cc_pedido")
 
-    # --- CORREÇÃO: Inicialize sempre como lista vazia ---
-    marmitas_disponiveis = []
+    marmitas_disponiveis = get_marmitas()
+    marmitas_disponiveis = marmitas_disponiveis[marmitas_disponiveis["saldo_atual"] > 0]
 
-    if os.path.exists(caminho_marmitas):
-        try:
-            df_marmitas = pd.read_csv(caminho_marmitas)
-            if "Saldo Atual" in df_marmitas.columns:
-                df_marmitas["Saldo Atual"] = pd.to_numeric(df_marmitas["Saldo Atual"], errors="coerce").fillna(0)
-                marmitas_com_saldo = df_marmitas[df_marmitas["Saldo Atual"] > 0].reset_index(drop=True)
-                marmitas_disponiveis = marmitas_com_saldo.to_dict(orient="records")
-        except Exception as e:
-            st.warning(f"Erro ao ler o arquivo de marmitas: {e}")
-
-    if marmitas_disponiveis:
+    if not marmitas_disponiveis.empty:
         st.markdown("<h4 style='color:#fff;margin-top:2em;'>Escolha sua marmita:</h4>", unsafe_allow_html=True)
         n_colunas = 2 if len(marmitas_disponiveis) > 1 else 1
         if "escolha_cardapio" not in st.session_state:
@@ -235,154 +257,104 @@ if menu == "Fazer Pedido":
             for j, col in enumerate(cols):
                 idx = i + j
                 if idx < len(marmitas_disponiveis):
-                    item = marmitas_disponiveis[idx]
+                    item = marmitas_disponiveis.iloc[idx]
                     with col:
                         st.markdown('<div class="card-marmita">', unsafe_allow_html=True)
-                        if item.get("Imagem") and os.path.exists(str(item["Imagem"])):
-                            st.image(str(item["Imagem"]), use_container_width=True)
+                        if item["imagem"]:
+                            st.image(item["imagem"], use_container_width=True)
                         else:
                             st.image("https://cdn-icons-png.flaticon.com/512/2921/2921827.png", width=120)
                         st.markdown(f"""
-                            <h5 style='margin-bottom:5px;font-size:1.4rem;'>{item['Marmita']}</h5>
-                            <p style='margin:0 0 4px 0;color:#eee;font-size:1.06rem;'>Estoque: {item['Saldo Atual']}</p>
+                            <h5 style='margin-bottom:5px;font-size:1.4rem;'>{item['nome']}</h5>
+                            <p style='margin:0 0 4px 0;color:#eee;font-size:1.06rem;'>Estoque: {item['saldo_atual']}</p>
                         """, unsafe_allow_html=True)
-                        if st.button(f"Selecionar {item['Marmita']}", key=f"btn_sel_{item['ID Marmita']}"):
+                        if st.button(f"Selecionar {item['nome']}", key=f"btn_sel_{item['id']}"):
                             st.session_state["escolha_cardapio"] = idx
                         st.markdown('</div>', unsafe_allow_html=True)
 
         escolhido = st.session_state.get("escolha_cardapio")
         if escolhido is not None:
-            selecionada = marmitas_disponiveis[escolhido]
-            st.success(f"Selecionado: {selecionada['Marmita']}")
+            selecionada = marmitas_disponiveis.iloc[escolhido]
+            st.success(f"Selecionado: {selecionada['nome']}")
             quantidade = st.number_input("Quantidade", min_value=1, max_value=50, value=1, key="quantidade_pedido")
             observacoes = st.text_area("Alguma observação? (opcional)", key="obs_pedido")
             if st.button("Fazer pedido", key="btn_fazer_pedido"):
-                estoque_disponivel = int(selecionada["Saldo Atual"])
+                estoque_disponivel = int(selecionada["saldo_atual"])
                 if nome and estoque_disponivel >= quantidade:
-                    id_pedido = gerar_id_pedido()
                     pedido = {
-                        "ID Pedido": id_pedido,
-                        "Data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Nome": nome,
-                        "Matrícula": str(matricula),
-                        "Unidade": unidade,
-                        "Destino da Entrega": destino,
-                        "Líder": lider,
-                        "Centro de Custo": centro_custo,
-                        "ID Marmita": selecionada["ID Marmita"],
-                        "Marmita": selecionada["Marmita"],
-                        "Quantidade": quantidade,
-                        "Observações": observacoes,
-                        "Status": "Recebido pela Cozinha"
+                        "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "nome": nome,
+                        "matricula": str(matricula),
+                        "unidade": unidade,
+                        "destino": destino,
+                        "lider": lider,
+                        "centro_custo": centro_custo,
+                        "marmita_id": selecionada["id"],
+                        "marmita_nome": selecionada["nome"],
+                        "quantidade": quantidade,
+                        "observacoes": observacoes,
+                        "status": "Recebido pela Cozinha"
                     }
-                    nome_arquivo = f"{id_pedido}_{nome.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
-                    caminho_pdf = gerar_pdf(pedido, nome_arquivo)
-                    st.success(f"📄 PDF gerado: {caminho_pdf}")
-
-                    with open(caminho_pdf, "rb") as file:
-                        st.download_button(
-                            label="📥 Baixar comprovante em PDF",
-                            data=file,
-                            file_name=nome_arquivo,
-                            mime="application/pdf",
-                            key="btn_baixar_pdf"
-                        )
-
-                    if not os.path.exists(caminho_csv):
-                        pd.DataFrame(columns=pedido.keys()).to_csv(caminho_csv, index=False)
-                    df = pd.read_csv(caminho_csv, dtype={"Matrícula": str})
-                    df = pd.concat([df, pd.DataFrame([pedido])], ignore_index=True)
-                    df.to_csv(caminho_csv, index=False)
-
-                    # Atualiza o saldo da marmita
-                    df_marmitas.loc[df_marmitas["ID Marmita"] == selecionada["ID Marmita"], "Saldo Atual"] -= quantidade
-                    df_marmitas.to_csv(caminho_marmitas, index=False)
-
-                    st.success(f"✅ Pedido feito com sucesso, {nome}! Você pediu {quantidade} marmita(s) de {selecionada['Marmita']}.")
-                    st.info(f"ID do Pedido: {id_pedido}")
-                    if observacoes:
-                        st.write(f"Obs: {observacoes}")
+                    add_pedido(pedido)
+                    atualizar_saldo_marmita(selecionada["id"], quantidade)
+                    st.success(f"✅ Pedido feito com sucesso, {nome}! Você pediu {quantidade} marmita(s) de {selecionada['nome']}.")
                     st.session_state["escolha_cardapio"] = None
                 else:
                     st.error("Preencha seu nome e confira o estoque disponível.")
     else:
         st.warning("⚠️ Nenhuma marmita disponível com saldo.")
 
-
-# ========== HISTÓRICO DE PEDIDOS ==========
+# ---------- HISTÓRICO DE PEDIDOS ----------
 elif menu == "Histórico de Pedidos":
     exibe_logo_topo()
     st.title("📑 Histórico de Pedidos")
-    if os.path.exists(caminho_csv):
-        try:
-            df = pd.read_csv(caminho_csv, dtype={"Matrícula": str})
-            df["Data"] = pd.to_datetime(df["Data"], errors='coerce')
-            if "Status" not in df.columns:
-                df["Status"] = "Recebido pela Cozinha"
-            if df.empty:
-                st.info("Nenhum pedido registrado ainda.")
-            else:
-                busca_matricula = st.text_input("Filtrar por matrícula (deixe em branco para mostrar tudo):")
-                data_min = df["Data"].min().date()
-                data_max = df["Data"].max().date()
-                data_inicio = st.date_input("De:", value=data_min, key="data_inicio")
-                data_fim = st.date_input("Até:", value=data_max, key="data_fim")
-                filtro = (
-                    (df["Data"] >= pd.to_datetime(data_inicio)) &
-                    (df["Data"] <= pd.to_datetime(data_fim) + pd.Timedelta(days=1))
-                )
-                df_filtrado = df.loc[filtro]
-                if busca_matricula:
-                    df_filtrado = df_filtrado[
-                        df_filtrado["Matrícula"].astype(str).str.contains(busca_matricula, case=False, na=False)
-                    ]
-                def cor_status_table(s):
-                    if s == "Entregue":
-                        return "background-color: #3cb371; color: white;"
-                    if s == "Cancelado":
-                        return "background-color: #d9534f; color: white;"
-                    if s in ("Recebido pela Cozinha", "Em preparo", "Enviado"):
-                        return "background-color: #ffcc00; color: black;"
-                    return ""
-                colunas_exibir = ["ID Pedido", "Data", "Nome", "Matrícula", "Unidade", "Destino da Entrega", "Líder", "Centro de Custo", "Marmita", "Quantidade", "Status"]
-                colunas_exibir = [c for c in colunas_exibir if c in df_filtrado.columns]
-                st.dataframe(df_filtrado[colunas_exibir].style.applymap(cor_status_table, subset=["Status"]), use_container_width=True)
-                st.success(f"{len(df_filtrado)} pedidos exibidos.")
-                csv_export = df_filtrado[colunas_exibir].to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "📥 Exportar como CSV",
-                    data=csv_export,
-                    file_name="historico_pedidos.csv",
-                    mime="text/csv",
-                    key="btn_exportar_csv"
-                )
-        except pd.errors.EmptyDataError:
-            st.warning("O arquivo de pedidos existe, mas está vazio ou mal formatado.")
-        except Exception as e:
-            st.error(f"Ocorreu um erro inesperado: {e}")
+    df = get_pedidos()
+    if not df.empty:
+        df["data"] = pd.to_datetime(df["data"], errors='coerce')
+        busca_matricula = st.text_input("Filtrar por matrícula (deixe em branco para mostrar tudo):")
+        data_min = df["data"].min().date() if not df["data"].isnull().all() else datetime.now().date()
+        data_max = df["data"].max().date() if not df["data"].isnull().all() else datetime.now().date()
+        data_inicio = st.date_input("De:", value=data_min, key="data_inicio")
+        data_fim = st.date_input("Até:", value=data_max, key="data_fim")
+        filtro = (
+            (df["data"] >= pd.to_datetime(data_inicio)) &
+            (df["data"] <= pd.to_datetime(data_fim) + pd.Timedelta(days=1))
+        )
+        df_filtrado = df.loc[filtro]
+        if busca_matricula:
+            df_filtrado = df_filtrado[
+                df_filtrado["matricula"].astype(str).str.contains(busca_matricula, case=False, na=False)
+            ]
+        st.dataframe(df_filtrado, use_container_width=True)
+        st.success(f"{len(df_filtrado)} pedidos exibidos.")
+        csv_export = df_filtrado.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Exportar como CSV",
+            data=csv_export,
+            file_name="historico_pedidos.csv",
+            mime="text/csv",
+            key="btn_exportar_csv"
+        )
     else:
         st.info("Nenhum pedido registrado ainda.")
 
-# ========== LOGIN ADMIN ==========
+# ---------- LOGIN ADMIN ----------
 elif menu == "Login Admin":
     st.title("🔐 Login do Administrador")
     login = st.text_input("Usuário", key="login_login")
     senha = st.text_input("Senha", type="password", key="senha_login")
     if st.button("Entrar", key="btn_entrar"):
-        if os.path.exists(caminho_usuarios):
-            df_usuarios = pd.read_csv(caminho_usuarios)
-            usuario = df_usuarios[(df_usuarios["login"] == login) & (df_usuarios["senha"] == senha)]
-            if not usuario.empty:
-                st.success(f"Bem-vindo(a), {usuario.iloc[0]['nome']}!")
-                st.session_state.autenticado = True
-                st.session_state.usuario = usuario.iloc[0]['nome']
-                st.rerun()
-            else:
-                st.error("Usuário ou senha inválidos.")
+        df_usuarios = get_usuarios()
+        usuario = df_usuarios[(df_usuarios["login"] == login) & (df_usuarios["senha"] == senha)]
+        if not usuario.empty:
+            st.success(f"Bem-vindo(a), {usuario.iloc[0]['nome']}!")
+            st.session_state.autenticado = True
+            st.session_state.usuario = usuario.iloc[0]['nome']
+            st.rerun()
         else:
-            st.warning("Nenhum usuário cadastrado. Cadastre usuários manualmente no CSV.")
+            st.error("Usuário ou senha inválidos.")
 
-# ========== CADASTRAR USUÁRIO ==========
+# ---------- CADASTRAR USUÁRIO ----------
 elif menu == "Cadastrar Usuário":
     if not st.session_state.autenticado:
         st.error("🔒 Acesso restrito. Faça login como administrador para cadastrar novos usuários.")
@@ -393,104 +365,24 @@ elif menu == "Cadastrar Usuário":
         senha_nova = st.text_input("Senha", type="password", key="senha_admin")
         if st.button("Cadastrar", key="btn_cadastrar"):
             if nome_novo and login_novo and senha_nova:
-                if os.path.exists(caminho_usuarios):
-                    df_usuarios = pd.read_csv(caminho_usuarios)
-                else:
-                    df_usuarios = pd.DataFrame(columns=["nome", "login", "senha"])
-                if login_novo in df_usuarios["login"].values:
-                    st.warning("⚠️ Este login já está em uso.")
-                else:
-                    novo = {"nome": nome_novo, "login": login_novo, "senha": senha_nova}
-                    df_usuarios = pd.concat([df_usuarios, pd.DataFrame([novo])], ignore_index=True)
-                    df_usuarios.to_csv(caminho_usuarios, index=False)
+                try:
+                    add_usuario(nome_novo, login_novo, senha_nova)
                     st.success("✅ Usuário cadastrado com sucesso!")
+                except sqlite3.IntegrityError:
+                    st.warning("⚠️ Este login já está em uso.")
             else:
                 st.warning("Preencha todos os campos para cadastrar o usuário.")
 
-# ========== ADMINISTRAÇÃO ==========
+# ---------- ADMINISTRAÇÃO ----------
 elif menu == "Administração":
     if not st.session_state.autenticado:
         st.error("🔒 Acesso restrito. Faça login como administrador para acessar esta tela.")
     else:
         exibe_logo_topo()
-        st.title("📦Administração de Marmitas")
-        st.subheader("Pedidos Recebidos - Gestão de Status (Massa)")
-
-        status_opcoes = ["Recebido pela Cozinha", "Em preparo", "Enviado", "Entregue", "Cancelado"]
-        if os.path.exists(caminho_csv):
-            df_pedidos = pd.read_csv(caminho_csv, dtype={"Matrícula": str})
-            if "Status" not in df_pedidos.columns:
-                df_pedidos["Status"] = "Recebido pela Cozinha"
-            df_pendentes = df_pedidos[df_pedidos["Status"].isin(["Recebido pela Cozinha", "Em preparo", "Enviado"])]
-
-            df_pendentes["Desc"] = df_pendentes.apply(
-                lambda row: f"{row['ID Pedido']} | {row['Nome']} | {row['Marmita']}", axis=1)
-            opcoes_multiselect = df_pendentes["Desc"].tolist()
-
-            if "pedidos_selecionados" not in st.session_state:
-                st.session_state["pedidos_selecionados"] = []
-
-            st.write("Ou clique para selecionar todos:")
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                if st.button("Selecionar todos", key="btn_select_all"):
-                    st.session_state["pedidos_selecionados"] = opcoes_multiselect
-                    st.rerun()
-            with col2:
-                if st.button("Limpar seleção", key="btn_limpar_select_all"):
-                    st.session_state["pedidos_selecionados"] = []
-                    st.rerun()
-
-            valores_validos = [v for v in st.session_state["pedidos_selecionados"] if v in opcoes_multiselect]
-            pedidos_selecionados = st.multiselect(
-                "Selecione os pedidos para atualizar (busca por ID ou Nome)",
-                opcoes_multiselect,
-                default=valores_validos,
-                key="multiselect_pedidos"
-            )
-            st.session_state["pedidos_selecionados"] = pedidos_selecionados
-
-            novo_status_massa = st.selectbox("Novo status", status_opcoes, key="novo_status_massa")
-            if st.button("Atualizar status", key="btn_atualizar_status_massa"):
-                if pedidos_selecionados:
-                    alterados = []
-                    for desc in pedidos_selecionados:
-                        id_pedido = desc.split("|")[0].strip()
-                        idx = df_pedidos[df_pedidos["ID Pedido"] == id_pedido].index
-                        if len(idx) > 0:
-                            idx = idx[0]
-                            atual = df_pedidos.at[idx, "Status"]
-                            qnt = int(df_pedidos.at[idx, "Quantidade"])
-                            id_marmita = df_pedidos.at[idx, "ID Marmita"]
-                            # Volta saldo caso cancelado
-                            if atual != "Cancelado" and novo_status_massa == "Cancelado":
-                                df_marmitas = pd.read_csv(caminho_marmitas)
-                                df_marmitas.loc[df_marmitas["ID Marmita"] == int(id_marmita), "Saldo Atual"] += qnt
-                                df_marmitas.to_csv(caminho_marmitas, index=False)
-                            registrar_historico(
-                                id_pedido=id_pedido,
-                                status_antigo=atual,
-                                status_novo=novo_status_massa,
-                                usuario=st.session_state.usuario if "usuario" in st.session_state else ""
-                            )
-                            df_pedidos.at[idx, "Status"] = novo_status_massa
-                            alterados.append(id_pedido)
-                    df_pedidos.to_csv(caminho_csv, index=False)
-                    st.success(f"Status de {len(alterados)} pedido(s) atualizado para '{novo_status_massa}'!")
-                    st.rerun()
-
-            colunas_exibir = ["ID Pedido", "Nome", "Marmita", "Quantidade", "Líder", "Centro de Custo", "Status", "Matrícula"]
-            colunas_exibir = [c for c in colunas_exibir if c in df_pendentes.columns]
-            df_pendentes_visu = df_pendentes[colunas_exibir].copy()
-            df_pendentes_visu["Status"] = df_pendentes_visu["Status"].apply(lambda s: cor_status(s))
-            st.write(df_pendentes_visu.to_html(escape=False, index=False), unsafe_allow_html=True)
+        st.title("📦 Administração de Marmitas")
 
         st.subheader("📋 Marmitas em Estoque com Saldo Atual")
-        if not os.path.exists(caminho_marmitas):
-            pd.DataFrame(
-                columns=["ID Marmita", "Marmita", "Estoque", "Saldo Atual", "Data de Cadastro", "Imagem"]
-            ).to_csv(caminho_marmitas, index=False)
-        df_marmitas = pd.read_csv(caminho_marmitas)
+        df_marmitas = get_marmitas()
         if df_marmitas.empty:
             st.info("Nenhuma marmita cadastrada ainda.")
         else:
@@ -499,94 +391,54 @@ elif menu == "Administração":
         st.subheader("➕ Novo Cadastro ou Atualização de Estoque")
         nova_marmita = st.text_input("Nome da marmita", key="nome_marmita")
         novo_estoque = st.number_input("Quantidade em estoque", min_value=0, step=1, key="quantidade_marmita")
-        foto_file = st.file_uploader("Foto do prato (obrigatório para novo cadastro)", type=["jpg", "jpeg", "png"], key="foto_marmita")
-        imagem_path = ""
-
+        foto_url = st.text_input("URL da foto do prato (S3, imgur, etc)", key="foto_marmita")
         if st.button("Salvar marmita", key="btn_salvar_marmita"):
             if not nova_marmita:
                 st.warning("Informe o nome da marmita.")
             else:
-                ja_existe = False
-                if "Marmita" in df_marmitas.columns and nova_marmita in df_marmitas["Marmita"].values:
-                    ja_existe = True
-
-                if not ja_existe and not foto_file:
-                    st.warning("Para cadastrar uma nova marmita, é obrigatório enviar uma foto do prato!")
+                ja_existe = df_marmitas[df_marmitas["nome"] == nova_marmita]
+                if not ja_existe.empty:
+                    atualizar_marmita(ja_existe.iloc[0]["id"], novo_estoque, foto_url)
+                    st.success(f"Estoque da marmita '{nova_marmita}' atualizado para {novo_estoque}.")
                 else:
-                    data_cadastro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if foto_file:
-                        ext = os.path.splitext(foto_file.name)[1].lower()
-                        unique_img = f"imagens/{uuid.uuid4().hex}{ext}"
-                        imagem_path = unique_img
-                        with open(imagem_path, "wb") as f:
-                            f.write(foto_file.getbuffer())
-                    if ja_existe:
-                        idx = df_marmitas[df_marmitas["Marmita"] == nova_marmita].index[0]
-                        df_marmitas.at[idx, "Estoque"] = novo_estoque
-                        df_marmitas.at[idx, "Saldo Atual"] = novo_estoque
-                        df_marmitas.at[idx, "Data de Cadastro"] = data_cadastro
-                        if imagem_path:
-                            df_marmitas.at[idx, "Imagem"] = imagem_path
-                        st.success(f"Estoque da marmita '{nova_marmita}' atualizado para {novo_estoque}.")
-                    else:
-                        novo_id = gerar_id_marmita(df_marmitas)
-                        nova_row = {
-                            "ID Marmita": novo_id,
-                            "Marmita": nova_marmita,
-                            "Estoque": novo_estoque,
-                            "Saldo Atual": novo_estoque,
-                            "Data de Cadastro": data_cadastro,
-                            "Imagem": imagem_path
-                        }
-                        df_marmitas = pd.concat([df_marmitas, pd.DataFrame([nova_row])], ignore_index=True)
-                        st.success(f"Marmita '{nova_marmita}' cadastrada com estoque {novo_estoque} e ID {novo_id}.")
-                    df_marmitas.to_csv(caminho_marmitas, index=False)
-                    st.rerun()
+                    add_marmita(nova_marmita, novo_estoque, foto_url)
+                    st.success(f"Marmita '{nova_marmita}' cadastrada com estoque {novo_estoque}.")
+            st.rerun()
 
         if st.button("Zerar todos os saldos", key="btn_zerar_saldos"):
-            df_marmitas["Saldo Atual"] = 0
-            df_marmitas.to_csv(caminho_marmitas, index=False)
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE marmitas SET saldo_atual=0")
+            conn.commit()
+            conn.close()
             st.success("Todos os saldos foram zerados.")
             st.rerun()
 
-# ==== HISTÓRICO DE ALTERAÇÕES ====
-elif menu == "Histórico de Alterações":
-    if not st.session_state.autenticado:
-        st.error("🔒 Acesso restrito. Faça login como administrador para acessar esta tela.")
-    else:
-        st.title("📝 Histórico de Alterações de Status")
-        if os.path.exists(caminho_historico):
-            df_hist = pd.read_csv(caminho_historico)
-            if df_hist.empty:
-                st.info("Nenhuma alteração registrada ainda.")
-            else:
-                busca_id = st.text_input("Filtrar por ID do Pedido (opcional):")
-                busca_usuario = st.text_input("Filtrar por usuário (opcional):")
-                data_min = pd.to_datetime(df_hist["DataHora"]).min().date()
-                data_max = pd.to_datetime(df_hist["DataHora"]).max().date()
-                data_inicio = st.date_input("De:", value=data_min, key="data_inicio_hist")
-                data_fim = st.date_input("Até:", value=data_max, key="data_fim_hist")
-                df_hist["DataHora"] = pd.to_datetime(df_hist["DataHora"])
-                filtro = (
-                    (df_hist["DataHora"] >= pd.to_datetime(data_inicio)) &
-                    (df_hist["DataHora"] <= pd.to_datetime(data_fim) + pd.Timedelta(days=1))
-                )
-                df_filtrado = df_hist.loc[filtro]
-                if busca_id:
-                    df_filtrado = df_filtrado[df_filtrado["ID Pedido"].astype(str).str.contains(busca_id, case=False, na=False)]
-                if busca_usuario:
-                    df_filtrado = df_filtrado[df_filtrado["Usuario"].astype(str).str.contains(busca_usuario, case=False, na=False)]
-                st.dataframe(df_filtrado.sort_values("DataHora", ascending=False), use_container_width=True)
-                st.success(f"{len(df_filtrado)} alterações exibidas.")
-                csv_export = df_filtrado.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "📥 Exportar log como CSV",
-                    data=csv_export,
-                    file_name="historico_alteracoes.csv",
-                    mime="text/csv",
-                    key="btn_exportar_hist_csv"
-                )
+# ---------- LOGOUT ----------
+elif menu == "Logout":
+    st.session_state.autenticado = False
+    st.session_state.usuario = ""
+    st.success("Logout realizado com sucesso!")
+    st.rerun()
+
+# ---------- CADASTRO DO PRIMEIRO ADMIN SE BANCO ESTIVER VAZIO ----------
+def existe_usuario():
+    conn = sqlite3.connect("marmita_facil.db")
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    qtd = c.fetchone()[0]
+    conn.close()
+    return qtd > 0
+
+if not existe_usuario():
+    st.title("👤 Cadastro do Primeiro Administrador")
+    nome = st.text_input("Nome completo", key="primeiro_nome")
+    login = st.text_input("Login", key="primeiro_login")
+    senha = st.text_input("Senha", type="password", key="primeiro_senha")
+    if st.button("Cadastrar Admin", key="primeiro_admin"):
+        if nome and login and senha:
+            add_usuario(nome, login, senha)
+            st.success("Administrador cadastrado com sucesso! Faça login para acessar o sistema.")
+            st.experimental_rerun()
         else:
-            st.info("Nenhuma alteração registrada ainda.")
-
-
+            st.warning("Preencha todos os campos para cadastrar o administrador.")

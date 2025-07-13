@@ -5,6 +5,7 @@ from reportlab.lib.utils import ImageReader
 import os
 
 def gerar_pdf(pedido, nome_arquivo):
+    # Pasta local onde os PDFs vão ficar salvos
     pasta = "data/pedidos_pdf"
     if not os.path.exists(pasta):
         os.makedirs(pasta)
@@ -13,8 +14,8 @@ def gerar_pdf(pedido, nome_arquivo):
     c = canvas.Canvas(caminho_pdf, pagesize=A4)
     largura, altura = A4
 
-    # LOGO + TÍTULO
-    logo_path = os.path.join("assets", "logo.png.png")
+    # Tenta carregar logo local (opcional)
+    logo_path = os.path.join("imagens", "logo-marmitafacil.png")
     logo_height = 2.3 * cm
     y_logo = altura - 3 * cm
     if os.path.exists(logo_path):
@@ -69,6 +70,7 @@ def gerar_pdf(pedido, nome_arquivo):
 
     c.save()
     return caminho_pdf
+
 
 
 
