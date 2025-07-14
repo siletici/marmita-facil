@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime
+import uuid
+import os
+from utils.pdf_export import mostrar_comprovante_pedido  # Certifique-se do caminho correto
 
 # ========================
 # CONFIGURAÇÃO E CSS
@@ -107,6 +110,16 @@ def init_db():
             FOREIGN KEY (marmita_id) REFERENCES marmitas(id)
         );
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS historico (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            datahora TEXT,
+            pedido_id INTEGER,
+            status_antigo TEXT,
+            status_novo TEXT,
+            usuario TEXT
+        );
+    """)
     conn.commit()
     conn.close()
 
@@ -135,6 +148,8 @@ menu_itens = {
 }
 if st.session_state.autenticado:
     menu_itens.update({
+        "Gestão de Pedidos": "🕒 Gestão de Pedidos",
+        "Histórico de Alterações": "📝 Histórico de Alterações",
         "Administração": "👨‍🍳 Administração",
         "Cadastrar Usuário": "👤 Cadastrar Usuário",
         "Logout": "🚪 Logout"
@@ -227,6 +242,35 @@ def atualizar_saldo_marmita(marmita_id, quantidade):
     conn.commit()
     conn.close()
 
+def atualizar_status_pedidos(ids, novo_status):
+    conn = get_conn()
+    c = conn.cursor()
+    for pedido_id in ids:
+        c.execute("SELECT status FROM pedidos WHERE id=?", (pedido_id,))
+        old = c.fetchone()
+        if old:
+            c.execute(
+                "INSERT INTO historico (datahora, pedido_id, status_antigo, status_novo, usuario) VALUES (?, ?, ?, ?, ?)",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pedido_id, old[0], novo_status, st.session_state.usuario)
+            )
+        c.execute("UPDATE pedidos SET status=? WHERE id=?", (novo_status, pedido_id))
+    conn.commit()
+    conn.close()
+
+def get_historico():
+    conn = get_conn()
+    df = pd.read_sql("SELECT * FROM historico", conn)
+    conn.close()
+    return df
+
+def existe_usuario():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    qtd = c.fetchone()[0]
+    conn.close()
+    return qtd > 0
+
 # ========================
 # FUNÇÕES TELA
 # ========================
@@ -298,6 +342,7 @@ if menu == "Fazer Pedido":
                     add_pedido(pedido)
                     atualizar_saldo_marmita(selecionada["id"], quantidade)
                     st.success(f"✅ Pedido feito com sucesso, {nome}! Você pediu {quantidade} marmita(s) de {selecionada['nome']}.")
+                    mostrar_comprovante_pedido(pedido)
                     st.session_state["escolha_cardapio"] = None
                 else:
                     st.error("Preencha seu nome e confira o estoque disponível.")
@@ -338,40 +383,110 @@ elif menu == "Histórico de Pedidos":
     else:
         st.info("Nenhum pedido registrado ainda.")
 
-# ---------- LOGIN ADMIN ----------
-elif menu == "Login Admin":
-    st.title("🔐 Login do Administrador")
-    login = st.text_input("Usuário", key="login_login")
-    senha = st.text_input("Senha", type="password", key="senha_login")
-    if st.button("Entrar", key="btn_entrar"):
-        df_usuarios = get_usuarios()
-        usuario = df_usuarios[(df_usuarios["login"] == login) & (df_usuarios["senha"] == senha)]
-        if not usuario.empty:
-            st.success(f"Bem-vindo(a), {usuario.iloc[0]['nome']}!")
-            st.session_state.autenticado = True
-            st.session_state.usuario = usuario.iloc[0]['nome']
-            st.rerun()
-        else:
-            st.error("Usuário ou senha inválidos.")
-
-# ---------- CADASTRAR USUÁRIO ----------
-elif menu == "Cadastrar Usuário":
+# ---------- GESTÃO DE PEDIDOS EM MASSA ----------
+elif menu == "Gestão de Pedidos":
     if not st.session_state.autenticado:
-        st.error("🔒 Acesso restrito. Faça login como administrador para cadastrar novos usuários.")
+        st.error("🔒 Acesso restrito. Faça login como administrador para acessar esta tela.")
     else:
-        st.title("👤 Cadastrar Novo Administrador")
-        nome_novo = st.text_input("Nome completo", key="nome_admin")
-        login_novo = st.text_input("Login", key="login_admin")
-        senha_nova = st.text_input("Senha", type="password", key="senha_admin")
-        if st.button("Cadastrar", key="btn_cadastrar"):
-            if nome_novo and login_novo and senha_nova:
-                try:
-                    add_usuario(nome_novo, login_novo, senha_nova)
-                    st.success("✅ Usuário cadastrado com sucesso!")
-                except sqlite3.IntegrityError:
-                    st.warning("⚠️ Este login já está em uso.")
-            else:
-                st.warning("Preencha todos os campos para cadastrar o usuário.")
+        exibe_logo_topo()
+        st.title("🕒 Gestão de Pedidos - Alteração em Massa")
+
+        df_pedidos = get_pedidos()
+        status_abertos = ["Recebido pela Cozinha", "Em preparo", "Enviado"]
+
+        pendentes = df_pedidos[df_pedidos["status"].isin(status_abertos)].copy()
+        if not pendentes.empty:
+            pendentes["Descrição"] = pendentes.apply(
+                lambda row: f"{row['id']} | {row['nome']} | {row['marmita_nome']} | {row['quantidade']}", axis=1
+            )
+            opcoes = pendentes["Descrição"].tolist()
+
+            col1, col2 = st.columns([1, 2])
+            if "pedidos_selecionados" not in st.session_state:
+                st.session_state["pedidos_selecionados"] = []
+            with col1:
+                if st.button("Selecionar todos"):
+                    st.session_state["pedidos_selecionados"] = opcoes
+                    st.rerun()
+            with col2:
+                if st.button("Limpar seleção"):
+                    st.session_state["pedidos_selecionados"] = []
+                    st.rerun()
+
+            selecionados = st.multiselect(
+                "Pedidos pendentes para atualizar",
+                opcoes,
+                default=st.session_state.get("pedidos_selecionados", [])
+            )
+            st.session_state["pedidos_selecionados"] = selecionados
+
+            novo_status = st.selectbox(
+                "Novo status",
+                ["Recebido pela Cozinha", "Em preparo", "Enviado", "Entregue", "Cancelado"],
+                key="novo_status_massa"
+            )
+
+            if st.button("Atualizar status selecionados"):
+                ids = [int(x.split("|")[0].strip()) for x in selecionados]
+                atualizar_status_pedidos(ids, novo_status)
+                st.success(f"Status atualizado para {novo_status}!")
+                st.session_state["pedidos_selecionados"] = []
+                st.rerun()
+
+            def cor_status(s):
+                if s == "Entregue":
+                    return "background-color: #3cb371; color: white;"
+                if s == "Cancelado":
+                    return "background-color: #d9534f; color: white;"
+                if s in status_abertos:
+                    return "background-color: #ffcc00; color: black;"
+                return ""
+            cols = ["id", "data", "nome", "marmita_nome", "quantidade", "status"]
+            if not all(c in pendentes.columns for c in cols):
+                cols = pendentes.columns
+            st.dataframe(
+                pendentes[cols].style.applymap(cor_status, subset=["status"]),
+                use_container_width=True
+            )
+        else:
+            st.info("Nenhum pedido pendente para alterar.")
+
+# ---------- HISTÓRICO DE ALTERAÇÕES ----------
+elif menu == "Histórico de Alterações":
+    if not st.session_state.autenticado:
+        st.error("🔒 Acesso restrito. Faça login como administrador para acessar esta tela.")
+    else:
+        st.title("📝 Histórico de Alterações de Status")
+        df_hist = get_historico()
+        if df_hist.empty:
+            st.info("Nenhuma alteração registrada ainda.")
+        else:
+            busca_id = st.text_input("Filtrar por ID do Pedido (opcional):")
+            busca_usuario = st.text_input("Filtrar por usuário (opcional):")
+            data_min = pd.to_datetime(df_hist["datahora"]).min().date()
+            data_max = pd.to_datetime(df_hist["datahora"]).max().date()
+            data_inicio = st.date_input("De:", value=data_min, key="data_inicio_hist")
+            data_fim = st.date_input("Até:", value=data_max, key="data_fim_hist")
+            df_hist["datahora"] = pd.to_datetime(df_hist["datahora"])
+            filtro = (
+                (df_hist["datahora"] >= pd.to_datetime(data_inicio)) &
+                (df_hist["datahora"] <= pd.to_datetime(data_fim) + pd.Timedelta(days=1))
+            )
+            df_filtrado = df_hist.loc[filtro]
+            if busca_id:
+                df_filtrado = df_filtrado[df_filtrado["pedido_id"].astype(str).str.contains(busca_id, case=False, na=False)]
+            if busca_usuario:
+                df_filtrado = df_filtrado[df_filtrado["usuario"].astype(str).str.contains(busca_usuario, case=False, na=False)]
+            st.dataframe(df_filtrado.sort_values("datahora", ascending=False), use_container_width=True)
+            st.success(f"{len(df_filtrado)} alterações exibidas.")
+            csv_export = df_filtrado.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Exportar log como CSV",
+                data=csv_export,
+                file_name="historico_alteracoes.csv",
+                mime="text/csv",
+                key="btn_exportar_hist_csv"
+            )
 
 # ---------- ADMINISTRAÇÃO ----------
 elif menu == "Administração":
@@ -414,31 +529,65 @@ elif menu == "Administração":
             st.success("Todos os saldos foram zerados.")
             st.rerun()
 
+# ---------- CADASTRAR USUÁRIO ----------
+elif menu == "Cadastrar Usuário":
+    if not st.session_state.autenticado:
+        st.error("🔒 Acesso restrito. Faça login como administrador para cadastrar novos usuários.")
+    else:
+        st.title("👤 Cadastrar Novo Administrador")
+        nome_novo = st.text_input("Nome completo", key="nome_admin")
+        login_novo = st.text_input("Login", key="login_admin")
+        senha_nova = st.text_input("Senha", type="password", key="senha_admin")
+        if st.button("Cadastrar", key="btn_cadastrar"):
+            if nome_novo and login_novo and senha_nova:
+                df_usuarios = get_usuarios()
+                if login_novo in df_usuarios["login"].values:
+                    st.warning("⚠️ Este login já está em uso.")
+                else:
+                    add_usuario(nome_novo, login_novo, senha_nova)
+                    st.success("✅ Usuário cadastrado com sucesso!")
+            else:
+                st.warning("Preencha todos os campos para cadastrar o usuário.")
+
+# ---------- LOGIN ADMIN / CADASTRO INICIAL ----------
+elif menu == "Login Admin":
+    if not existe_usuario():
+        st.title("👤 Cadastro do Primeiro Administrador")
+        nome = st.text_input("Nome completo")
+        login = st.text_input("Login")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Cadastrar Admin"):
+            if nome and login and senha:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("INSERT INTO usuarios (nome, login, senha) VALUES (?, ?, ?)", (nome, login, senha))
+                conn.commit()
+                conn.close()
+                st.success("Administrador cadastrado com sucesso! Faça login para acessar o sistema.")
+                st.experimental_rerun()
+            else:
+                st.warning("Preencha todos os campos para cadastrar o administrador.")
+    else:
+        st.title("🔐 Login do Administrador")
+        login_user = st.text_input("Login")
+        senha_user = st.text_input("Senha", type="password")
+        if st.button("Entrar"):
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT * FROM usuarios WHERE login=? AND senha=?", (login_user, senha_user))
+            user = c.fetchone()
+            conn.close()
+            if user:
+                st.success(f"Bem-vindo(a), {user[1]}!")
+                st.session_state.autenticado = True
+                st.session_state.usuario = user[1]
+                st.experimental_rerun()
+            else:
+                st.error("Usuário ou senha inválidos.")
+
 # ---------- LOGOUT ----------
 elif menu == "Logout":
     st.session_state.autenticado = False
     st.session_state.usuario = ""
     st.success("Logout realizado com sucesso!")
     st.rerun()
-
-# ---------- CADASTRO DO PRIMEIRO ADMIN SE BANCO ESTIVER VAZIO ----------
-def existe_usuario():
-    conn = sqlite3.connect("marmita_facil.db")
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM usuarios")
-    qtd = c.fetchone()[0]
-    conn.close()
-    return qtd > 0
-
-if not existe_usuario():
-    st.title("👤 Cadastro do Primeiro Administrador")
-    nome = st.text_input("Nome completo", key="primeiro_nome")
-    login = st.text_input("Login", key="primeiro_login")
-    senha = st.text_input("Senha", type="password", key="primeiro_senha")
-    if st.button("Cadastrar Admin", key="primeiro_admin"):
-        if nome and login and senha:
-            add_usuario(nome, login, senha)
-            st.success("Administrador cadastrado com sucesso! Faça login para acessar o sistema.")
-            st.experimental_rerun()
-        else:
-            st.warning("Preencha todos os campos para cadastrar o administrador.")

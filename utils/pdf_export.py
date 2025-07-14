@@ -1,76 +1,29 @@
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.units import cm
-from reportlab.lib.utils import ImageReader
-import os
-
-def gerar_pdf(pedido, nome_arquivo):
-    # Pasta local onde os PDFs vão ficar salvos
-    pasta = "data/pedidos_pdf"
-    if not os.path.exists(pasta):
-        os.makedirs(pasta)
-    caminho_pdf = os.path.join(pasta, nome_arquivo)
-
-    c = canvas.Canvas(caminho_pdf, pagesize=A4)
-    largura, altura = A4
-
-    # Tenta carregar logo local (opcional)
-    logo_path = os.path.join("imagens", "logo-marmitafacil.png")
-    logo_height = 2.3 * cm
-    y_logo = altura - 3 * cm
-    if os.path.exists(logo_path):
-        c.drawImage(ImageReader(logo_path), x=2 * cm, y=y_logo, width=logo_height*1.6, height=logo_height, preserveAspectRatio=True)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawCentredString(largura / 2 + 2.5*cm, altura - 2.2 * cm, "Comprovante de Pedido - Marmita Fácil")
-
-    y = altura - 4 * cm
-
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(2*cm, y, f"ID do Pedido: {pedido.get('ID Pedido', '')}")
-    y -= 0.8*cm
-
-    c.setFont("Helvetica", 12)
-    c.drawString(2*cm, y, f"Data/Hora: {pedido.get('Data', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Nome: {pedido.get('Nome', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Matrícula: {pedido.get('Matrícula', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Unidade: {pedido.get('Unidade', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Destino da Entrega: {pedido.get('Destino da Entrega', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Líder Imediato: {pedido.get('Líder Imediato', '')}")
-    y -= 0.7*cm
-
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(2*cm, y, f"ID Marmita: {pedido.get('ID Marmita', '')}")
-    y -= 0.8*cm
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(2*cm, y, f"Marmita: {pedido.get('Marmita', '')}")
-    y -= 0.7*cm
-    c.setFont("Helvetica", 12)
-    c.drawString(2*cm, y, f"Quantidade: {pedido.get('Quantidade', '')}")
-    y -= 0.7*cm
-    c.drawString(2*cm, y, f"Status: {pedido.get('Status', '')}")
-    y -= 0.7*cm
-    obs = pedido.get('Observações', '')
-    if obs:
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(2*cm, y, "Observações:")
-        y -= 0.5*cm
-        c.setFont("Helvetica", 12)
-        for linha in obs.split('\n'):
-            c.drawString(2.8*cm, y, linha)
-            y -= 0.5*cm
-
-    y -= 0.7*cm
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(2*cm, y, "Guarde este comprovante. Dúvidas? Procure o seu Gestor ou Administrativo.")
-
-    c.save()
-    return caminho_pdf
-
+def mostrar_comprovante_pedido(pedido):
+    st.markdown(f"""
+        <div style="background:#23272B; padding:32px; border-radius:20px; max-width:480px; margin:auto; color:#fff; box-shadow:0 6px 24px #0002;">
+            <div style="text-align:center; margin-bottom:18px;">
+                <img src="https://marmita-facil-dados.s3.us-east-2.amazonaws.com/imagens/logo-marmitafacil.png" alt="Logo" style="max-width:180px; border-radius:10px;"/>
+            </div>
+            <h2 style="text-align:center; color:#FFC300; margin-bottom:18px;">Comprovante de Pedido</h2>
+            <hr style="border:1px solid #ED212B;">
+            <p><strong>Nome:</strong> {pedido["nome"]}</p>
+            <p><strong>Matrícula:</strong> {pedido["matricula"]}</p>
+            <p><strong>Unidade:</strong> {pedido["unidade"]}</p>
+            <p><strong>Destino da Entrega:</strong> {pedido["destino"]}</p>
+            <p><strong>Líder:</strong> {pedido["lider"]}</p>
+            <p><strong>Centro de Custo:</strong> {pedido["centro_custo"]}</p>
+            <p><strong>Marmita:</strong> {pedido["marmita_nome"]}</p>
+            <p><strong>Quantidade:</strong> {pedido["quantidade"]}</p>
+            <p><strong>Data/Hora:</strong> {pedido["data"]}</p>
+            {"<p><strong>Observações:</strong> " + pedido['observacoes'] + "</p>" if pedido["observacoes"] else ""}
+            <hr style="border:1px solid #ED212B; margin-top:18px;">
+            <p style="color:#FFF; margin-top:18px; text-align:center;">
+                <b>Para gerar o comprovante em PDF:</b><br>
+                Pressione <b>Ctrl+P</b> (ou <b>Comando+P</b> no Mac) e escolha <b>Salvar como PDF</b>.<br>
+                <b>Depois, envie este comprovante no WhatsApp do seu líder ou responsável administrativo.</b>
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
 
 
 
