@@ -564,7 +564,7 @@ elif menu == "Login Admin":
                 conn.commit()
                 conn.close()
                 st.success("Administrador cadastrado com sucesso! Faça login para acessar o sistema.")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.warning("Preencha todos os campos para cadastrar o administrador.")
     else:
@@ -581,7 +581,7 @@ elif menu == "Login Admin":
                 st.success(f"Bem-vindo(a), {user[1]}!")
                 st.session_state.autenticado = True
                 st.session_state.usuario = user[1]
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Usuário ou senha inválidos.")
 
